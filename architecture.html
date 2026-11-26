@@ -1,0 +1,210 @@
+<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><meta name="theme-color" content="#0a1220"><title>Motion Lab — Architecture</title><style>
+:root{color-scheme:dark;--bg:#0a1220;--surface:#111c2f;--surface2:#16243b;--border:#25375a;--text:#e8f0fb;--muted:#97a9c2;--accent:#38bdf8;--good:#34d399;--warn:#fbbf24}
+*{box-sizing:border-box}body{margin:0;background:var(--bg);color:var(--text);font:16px/1.6 -apple-system,BlinkMacSystemFont,"Segoe UI",system-ui,sans-serif}
+a{color:var(--accent)}code{font:13.5px ui-monospace,SFMono-Regular,Menlo,monospace;background:var(--surface2);border:1px solid var(--border);border-radius:6px;padding:1px 6px}
+pre{font:13px/1.5 ui-monospace,SFMono-Regular,Menlo,monospace;background:var(--surface);border:1px solid var(--border);border-radius:10px;padding:12px 14px;overflow-x:auto}
+header{border-bottom:1px solid var(--border);background:var(--surface)}header div{max-width:900px;margin:auto;padding:22px 20px}header h1{margin:0 0 4px;font-size:26px}header p{margin:0;color:var(--muted)}
+main{max-width:900px;margin:auto;padding:8px 20px 60px}h2{font-size:21px;margin:38px 0 10px;padding-top:6px;border-top:1px solid var(--border)}h3{font-size:17px;margin:24px 0 8px}
+p,li{color:#d5e0ef}ul,ol{padding-left:22px}li{margin:4px 0}.muted{color:var(--muted)}
+nav.toc{background:var(--surface);border:1px solid var(--border);border-radius:14px;padding:14px 18px;margin:20px 0}nav.toc b{display:block;margin-bottom:6px}nav.toc ol{margin:0;columns:2;column-gap:28px}@media(max-width:600px){nav.toc ol{columns:1}}
+table{width:100%;border-collapse:collapse;font-size:14.5px;margin:10px 0}th,td{text-align:left;vertical-align:top;padding:8px 10px;border-bottom:1px solid var(--border)}th{color:var(--muted);font-weight:600;background:var(--surface2)}
+figure{margin:18px 0;background:var(--surface);border:1px solid var(--border);border-radius:14px;padding:14px}figcaption{color:var(--muted);font-size:13.5px;margin-top:8px}
+svg text{font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",system-ui,sans-serif}
+.back{display:inline-block;margin-top:10px;font-weight:600;text-decoration:none}
+</style></head><body>
+<header><div><h1>Motion Lab — Architecture</h1><p>Version 9.11 · How the system turns two or three ordinary phone cameras into live 3D body tracking, and the components it's built from. For setup and fixes, see <a href="help.html">Help</a>.</p><a class="back" href="./">← Back to Motion Lab</a></div></header>
+<main>
+<nav class="toc"><b>Contents</b><ol>
+<li><a href="#overview">Overview</a></li><li><a href="#components">Components &amp; dependencies</a></li><li><a href="#detect">On each phone: detection</a></li><li><a href="#net">Networking</a></li>
+<li><a href="#sync">Clock sync &amp; frame matching</a></li><li><a href="#calib">Camera alignment (calibration)</a></li><li><a href="#tri">3D reconstruction</a></li><li><a href="#world">World frame &amp; scale</a></li>
+<li><a href="#viz">Visualisation &amp; costumes</a></li><li><a href="#games">Games</a></li><li><a href="#demo">Demo mode</a></li><li><a href="#data">Data formats &amp; storage</a></li>
+<li><a href="#code">Source layout &amp; build</a></li><li><a href="#quality">Accuracy &amp; testing</a></li><li><a href="#limits">Known limits &amp; next steps</a></li></ol></nav>
+
+<h2 id="overview">1. Overview</h2>
+<p>Motion Lab is a single static web page. Every phone runs the same page. Each phone detects the person's skeleton in its own camera image (2D), and sends only those points — never video — to <b>Phone A</b>, the host. Phone A matches up frames taken at the same instant, works out where the cameras are relative to one another, and intersects the cameras' lines of sight to recover every joint in 3D. The 3D skeleton then drives the viewer, the costumes and the games.</p>
+<figure><svg viewBox="0 0 860 430" width="100%" role="img" aria-label="Data flow: phones B and C detect skeletons and send points over WebRTC to Phone A, which syncs clocks, matches frames, aligns cameras, triangulates 3D joints and feeds the viewer and games.">
+<defs><marker id="ar" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto"><path d="M0 0L10 5L0 10z" fill="#5d7aa6"/></marker></defs>
+<g font-size="13" fill="#e8f0fb">
+<rect x="10" y="20" width="200" height="120" rx="12" fill="#16243b" stroke="#324a72"/><text x="110" y="44" text-anchor="middle" font-weight="700">Phone B</text>
+<text x="110" y="70" text-anchor="middle" fill="#97a9c2">Camera (getUserMedia)</text><text x="110" y="92" text-anchor="middle" fill="#97a9c2">MediaPipe Pose / Holistic</text><text x="110" y="114" text-anchor="middle" fill="#97a9c2">33 (+42 hand) 2D points</text>
+<rect x="10" y="160" width="200" height="120" rx="12" fill="#16243b" stroke="#324a72"/><text x="110" y="184" text-anchor="middle" font-weight="700">Phone C (optional)</text>
+<text x="110" y="210" text-anchor="middle" fill="#97a9c2">Camera (getUserMedia)</text><text x="110" y="232" text-anchor="middle" fill="#97a9c2">MediaPipe Pose / Holistic</text><text x="110" y="254" text-anchor="middle" fill="#97a9c2">33 (+42 hand) 2D points</text>
+<rect x="10" y="310" width="200" height="90" rx="12" fill="#111c2f" stroke="#25375a" stroke-dasharray="5 4"/><text x="110" y="336" text-anchor="middle" font-weight="700">PeerJS signalling</text><text x="110" y="358" text-anchor="middle" fill="#97a9c2">0.peerjs.com</text><text x="110" y="378" text-anchor="middle" fill="#97a9c2">introductions only</text>
+<path d="M210 80 C260 80 260 150 300 150" stroke="#5d7aa6" stroke-width="2" fill="none" marker-end="url(#ar)"/><path d="M210 220 C260 220 260 175 300 175" stroke="#5d7aa6" stroke-width="2" fill="none" marker-end="url(#ar)"/>
+<text x="255" y="128" text-anchor="middle" font-size="11.5" fill="#97a9c2">WebRTC</text><text x="255" y="142" text-anchor="middle" font-size="11.5" fill="#97a9c2">data channel</text>
+<path d="M210 355 C280 355 300 330 330 300" stroke="#324a72" stroke-width="1.5" stroke-dasharray="4 4" fill="none"/>
+<rect x="300" y="20" width="300" height="390" rx="14" fill="#0f2338" stroke="#38bdf8"/><text x="450" y="46" text-anchor="middle" font-weight="700" fill="#38bdf8">Phone A (host)</text>
+<g fill="#16243b" stroke="#324a72"><rect x="320" y="62" width="260" height="40" rx="9"/><rect x="320" y="112" width="260" height="40" rx="9"/><rect x="320" y="162" width="260" height="40" rx="9"/><rect x="320" y="212" width="260" height="40" rx="9"/><rect x="320" y="262" width="260" height="40" rx="9"/><rect x="320" y="312" width="260" height="40" rx="9"/><rect x="320" y="362" width="260" height="36" rx="9"/></g>
+<text x="450" y="87" text-anchor="middle">Own camera + MediaPipe</text><text x="450" y="137" text-anchor="middle">Clock sync (ping/pong)</text><text x="450" y="187" text-anchor="middle">Frame matching + interpolation</text><text x="450" y="237" text-anchor="middle">Camera alignment (once)</text><text x="450" y="287" text-anchor="middle">Weighted N-view triangulation</text><text x="450" y="337" text-anchor="middle">World frame · metres · smoothing</text><text x="450" y="385" text-anchor="middle" fill="#97a9c2">Recording · raw sessions</text>
+<path d="M600 230 L650 230" stroke="#5d7aa6" stroke-width="2" marker-end="url(#ar)"/>
+<g fill="#16243b" stroke="#324a72"><rect x="655" y="70" width="195" height="56" rx="11"/><rect x="655" y="140" width="195" height="56" rx="11"/><rect x="655" y="210" width="195" height="56" rx="11"/><rect x="655" y="280" width="195" height="56" rx="11"/></g>
+<text x="752" y="94" text-anchor="middle" font-weight="700">3D view</text><text x="752" y="113" text-anchor="middle" fill="#97a9c2" font-size="12">orbit · body-part focus</text>
+<text x="752" y="164" text-anchor="middle" font-weight="700">Costumes</text><text x="752" y="183" text-anchor="middle" fill="#97a9c2" font-size="12">rig + primitive kit</text>
+<text x="752" y="234" text-anchor="middle" font-weight="700">Cube game</text><text x="752" y="253" text-anchor="middle" fill="#97a9c2" font-size="12">reach + hold</text>
+<text x="752" y="304" text-anchor="middle" font-weight="700">Ping pong</text><text x="752" y="323" text-anchor="middle" fill="#97a9c2" font-size="12">physics + robot</text><rect x="655" y="350" width="195" height="56" rx="11" fill="#16243b" stroke="#324a72"/><text x="752" y="374" text-anchor="middle" font-weight="700">Playhouse</text><text x="752" y="393" text-anchor="middle" fill="#97a9c2" font-size="12">costume + backdrop</text><rect x="655" y="0" width="195" height="56" rx="11" fill="#16243b" stroke="#324a72"/><text x="752" y="24" text-anchor="middle" font-weight="700">Duck shoot → TV</text><text x="752" y="43" text-anchor="middle" fill="#97a9c2" font-size="12">finger-gun aim + trigger</text>
+</g></svg><figcaption>Data flow. Phones B and C only detect and send; Phone A does detection plus all 3D work and runs every visualisation and game.</figcaption></figure>
+
+<h2 id="components">2. Components &amp; dependencies</h2>
+<table><tr><th>Component</th><th>Role</th><th>Source</th></tr>
+<tr><td>MediaPipe Pose 0.5 (legacy JS solution)</td><td>Body landmark detection: 33 points with visibility, per video frame. WebAssembly + TFLite model (full model, <code>modelComplexity: 1</code>).</td><td>cdn.jsdelivr.net/npm/@mediapipe/pose@0.5 (unpkg fallback)</td></tr>
+<tr><td>MediaPipe Holistic 0.5</td><td>"Body + detailed hands" mode: pose plus 21 points per hand (face mesh computed but unused).</td><td>cdn.jsdelivr.net/npm/@mediapipe/holistic@0.5</td></tr>
+<tr><td>PeerJS 1.5.5</td><td>WebRTC wrapper: peer IDs, signalling, data channels.</td><td>unpkg.com/peerjs@1.5.5</td></tr>
+<tr><td>PeerJS public cloud server</td><td>Signalling only — exchanges connection offers; no tracking data passes through it.</td><td>0.peerjs.com</td></tr>
+<tr><td>WebRTC data channel</td><td>Encrypted peer-to-peer transport for skeleton packets (<code>reliable: false</code>, JSON).</td><td>Browser built-in</td></tr>
+<tr><td>getUserMedia</td><td>Camera stream (requested 640×480 ideal, chosen facing mode).</td><td>Browser built-in</td></tr>
+<tr><td>Canvas 2D</td><td>All drawing: 2D overlays, 3D viewer, costumes, games — a small custom perspective renderer with painter's-algorithm depth sorting. Exceptions: the realistic Pinocchio and imported VRM characters are rendered with three.js r149 (WebGL; ES modules served from the site's own lib/ folder through an import map and loaded on demand, with @pixiv/three-vrm 1.0 and GLTFLoader for VRM). VRM characters are posed on three-vrm's normalized humanoid rig: torso and head from body frames, limbs from aim directions plus elbow/knee hinge planes, wrists, fingers and feet from the hand and foot points, half the wrist twist given to the forearm; the model is scaled to the tracked leg length and spring bones run once per frame. Imported files are kept in IndexedDB. Pinocchio uses rigid carved pieces placed per bone each frame, PBR materials with an environment map and shadow-mapped key light, drawn with the view's own camera into an offscreen canvas and composited into the 2D picture at the performer's depth; mirrored views reflect the model.</td><td>Browser built-in</td></tr>
+<tr><td>Web Audio</td><td>Game sounds (short synthesised tones).</td><td>Browser built-in</td></tr>
+<tr><td>Fullscreen API, IntersectionObserver, localStorage</td><td>Full-screen views; pausing drawing of off-screen canvases; saved settings.</td><td>Browser built-in</td></tr>
+<tr><td>MotionCore (core.js)</td><td>All geometry: essential matrix, RANSAC, refinement, triangulation, world frame, aim point, similarity fits, synthetic skeleton for demo/tests.</td><td>This project</td></tr>
+<tr><td>App layer</td><td>UI shell, networking, sync, matching, setup checks, viewer, costumes, games, recording.</td><td>This project</td></tr>
+<tr><td>Netlify</td><td>Static hosting over HTTPS (required for camera access).</td><td>Deployment</td></tr></table>
+
+<h2 id="detect">3. On each phone: detection</h2>
+<ul>
+<li>A loop sends the newest video frame to MediaPipe as soon as the previous one finishes (no fixed frame rate). The <b>capture timestamp</b> (<code>performance.now()</code> just before inference) is attached to the result.</li>
+<li>Results are packed as <code>[x, y, visibility]</code> per point, with x/y normalised to the image (0–1). Body only: 33 points. Detailed hands: 33 + 21 (left) + 21 (right) = 75 points; missing hands are sent as zeros.</li>
+<li>Holistic's hands are re-checked against the body's wrists (nearest wrist wins) so a hand is never attached to the wrong arm.</li>
+<li>The image size (w, h) travels with every packet — the geometry needs it, and it lets devices with different cameras/orientations mix.</li>
+<li>Every phone draws its own and received skeletons over its preview and computes the <b>setup check</b> (frame rate, edge contact, feet visible, centring) over a rolling 4-second window.</li>
+</ul>
+
+<h2 id="net">4. Networking</h2>
+<ul>
+<li><b>Topology:</b> star. Phone A registers the peer ID <code>motion-lab-&lt;room&gt;-host</code>. Joiners connect to that ID. The host assigns letters <b>B</b> then <b>C</b> (max three phones) and sends <code>hello</code>.</li>
+<li><b>Messages</b> (JSON): <code>pose</code> {t, w, h, p}, <code>ping</code> {t0}, <code>pong</code> {t0, tg}, <code>join</code> {as: camera|tv}, <code>hello</code> {slot}, <code>config</code> {mode}, <code>duck</code> {v}, <code>tvmode</code> {mode, title} and <code>couch</code> {s} (host → TV), plus a PeerJS <b>media call</b> carrying the TV video/audio (tracking mode is set by Phone A for all), <code>full</code>.</li>
+<li><b>Bandwidth</b> is tiny: ~1–2 KB per packet at ~10–15 packets/s per phone.</li>
+<li><b>Privacy:</b> video never leaves a device; the signalling server sees only connection set-up.</li>
+</ul>
+
+<h2 id="sync">5. Clock sync &amp; frame matching</h2>
+<h3>Clock sync</h3>
+<p>Each phone's clock starts at a different moment. Every second the host pings each guest; the guest replies with its own clock reading. For each exchange the offset is <code>guestTime − (sendTime + receiveTime)/2</code>. The host keeps the last 15 samples and uses the one with the <b>shortest round trip</b> (least affected by network delay). Guest timestamps are converted to host time with that offset.</p>
+<h3>Frame matching</h3>
+<ul>
+<li>The host keeps a 2-second buffer per guest. For each of its own frames it waits until every active guest has sent a frame from <i>after</i> that moment (or 300 ms pass), then <b>linearly interpolates</b> each guest's points to the exact instant (gaps up to 500 ms, so slower devices still contribute).</li>
+<li>The result is a "matched moment": the same instant seen from 2–3 viewpoints. Analysis of a real session showed this timing is accurate to within ~50 ms.</li>
+</ul>
+
+<h2 id="calib">6. Camera alignment (calibration)</h2>
+<p>No checkerboard: the person's own joints are the calibration target. During the ~10-second walk-around the host collects 140 matched moments. Then, for each phone paired with Phone A:</p>
+<ol>
+<li><b>Camera model.</b> Pinhole camera with the principal point at the image centre and focal length from the lens field of view across the long side: <code>f = (max(w,h)/2) / tan(FOV/2)</code>. Points become normalised camera rays.</li>
+<li><b>Correspondences.</b> 17 body joints (nose, shoulders, elbows, wrists, hips, knees, ankles, heels, toes) seen confidently (visibility &gt; 0.6) by both phones and not near a frame edge. Up to 2,500 are used.</li>
+<li><b>Essential matrix</b> by the linear 8-point algorithm inside <b>RANSAC</b> (Sampson distance, 8 px threshold), started from four different random seeds; the best result is kept. (A single start failed ~1 in 8 times on real data.)</li>
+<li><b>Relative pose.</b> The essential matrix is split into rotation and translation; the one of four solutions that puts points in front of both cameras wins.</li>
+<li><b>Refinement.</b> Levenberg–Marquardt over the 5 pose parameters, minimising a robust (Cauchy) loss on Sampson errors, so wrong matches (e.g. left/right swaps) don't drag the solution.</li>
+<li><b>Phone C</b> is aligned to A the same way. Because each pair's distance scale is arbitrary, C's translation is rescaled so that joints triangulated from A+C agree in depth with A+B (median ratio).</li>
+<li><b>Quality.</b> Reprojection error (how far re-projected joints land from where cameras saw them): Good &lt; 3 px, OK 3–7 px, Poor &gt; 7 px. "Joints agree" = share within 8 px.</li>
+</ol>
+<p>The alignment is saved on Phone A and is valid while no phone moves or changes orientation.</p>
+
+<h2 id="tri">7. 3D reconstruction</h2>
+<ul>
+<li>For each joint, every phone that sees it contributes two linear equations (DLT); the least-squares solution is the 3D point. Each view is <b>weighted</b> by detection confidence × an edge factor (joints within 2–8% of the frame edge fade out) × a camera weight from how well that camera aligned.</li>
+<li>With three views, if one camera's view of a joint disagrees by more than 12 px it is dropped for that joint and the point is recomputed from the other two.</li>
+<li>Results are smoothed with an exponential moving average (factor 0.55) for display. Games use their own prediction (below) on the unsmoothed points.</li>
+</ul>
+
+<h2 id="world">8. World frame &amp; scale</h2>
+<ul>
+<li><b>Up</b> = average direction from mid-hips to mid-shoulders during alignment. <b>Floor</b> = 5th percentile height of the feet. <b>Forward</b> = Phone A's viewing direction flattened onto the floor.</li>
+<li><b>Scale:</b> standing height is estimated from shoulder height (≈ 0.818 × stature) and matched to the height entered, giving metres. Coordinates: x right, y up (floor = 0), z away from Phone A; origin under the person's alignment position.</li>
+<li><b>Aim point:</b> the point where Phone A's and Phone B's optical axes pass closest to each other — the best-tracked spot, used to place the cube grid.</li>
+</ul>
+
+<h2 id="viz">9. Visualisation &amp; costumes</h2>
+<ul>
+<li><b>Renderer:</b> a look-at camera with perspective projection on Canvas 2D. Orbit/zoom by pointer and pinch. The view follows the selected body part, sized to fit it.</li>
+<li><b>Costumes</b> use a <b>rig</b> computed from joints each frame — torso frame (up, right, forward), shoulder/hip widths, and a head frame (face direction from nose vs ears) — and a <b>kit</b> of primitives: shaded spheres, tapered limbs (hull of two circles), torso shells (hull of elliptical rings), ribbons, polygons and surface details hidden when facing away. Everything is depth-sorted and painted back to front.</li>
+<li>Costumes: Snowman, Dragon (arm-to-hip bat wings, animated tail), Human skeleton, Witch, Gymnast (female), Gymnast (male).</li>
+<li><b>Playhouse:</b> the same costume renderer drawn from an "audience" camera in front of the performer (where Phone A is), over an uploaded backdrop. The projection is built so the stage centre's floor lands exactly on a user-set floor line, with px-per-metre set by the size slider; mirror mode flips left/right. The stage centre is the aim point (or follows the performer). Uploaded pictures are downscaled in the browser (canvas → JPEG, ≤1600 px, falling back to smaller sizes if storage is full) and kept per character in localStorage. Snapshot exports the canvas as PNG. Flanking characters reuse the same pose, offset sideways and 1 m deeper (so they appear smaller and are drawn first, behind the performer); echo/ripple timing reads from a 1.5 s pose history (ripple: first side 0, main one step, last side two steps; step 0.2–0.45 s), and mirroring reflects the pose about its own hip centre and swaps left/right joints. Cycle mode advances the character every 15 s (timer independent of drawing, so it keeps time even off screen); the backdrop follows because it is looked up per character. <b>Built-in backdrops</b> ship as static files (<code>backdrops/&lt;character&gt;.jpg</code>, 1600×900 JPEG, ~200–400 KB each) and are fetched lazily, plus a background prefetch 2.5 s after load so cycling switches instantly. The picture is resolved per character in this order: the user's own upload → an explicit "use built-in" marker → an "off" marker (painted stage) → the user's default picture → the built-in file → the painted stage. Only uploads and the two markers live in localStorage; the built-ins never use device storage. Because they are same-origin, Snapshot and the TV stream (canvas capture) still work. <b>360° panorama view</b> replaces the fixed audience camera with one that orbits the performer: camera position <code>c0 + D·(sin θ, 0, −cos θ)</code> looking at the (smoothed) hip centre, focal length from the chosen view width, distance from the character-size slider (and kept ≥ ~3.5 m when flankers are on). θ advances at 2π per orbit period, or follows a pointer drag. The panorama is treated as a cylinder at infinity: its horizontal axis is azimuth (one image width = 360°) at a scale of 2πf/width screen pixels per image pixel, so the background scrolls in lock-step with the 3D projection of the characters; it is drawn in repeating copies with the top and bottom rows stretched to fill any gap, mirrored together with the characters when Mirror is on. Uploaded panoramas get their left/right join cross-faded over 6% of the width; characters without one use their backdrop concatenated with its mirror image (seamless by construction). Characters (main + flankers) are depth-sorted every frame so whoever is nearer the camera is drawn on top. Built-in panoramas live in <code>panos/&lt;character&gt;.jpg</code>. <b>Effects</b> are a small particle system in world coordinates (metres): each frame the chosen joints (hand = index fingertip, falling back to wrist; head = between the ears plus 10 cm; feet = foot tip; hips = mid-hip; whole body = 11 joints) of the main character — and flankers, if ticked — emit particles at a rate scaled by the part's speed (frame-to-frame velocity, clamped at 6 m/s), capped at 900 live particles. Each kind has its own motion (sparks: gravity and a damped floor bounce; fire: buoyant rise; stars and bubbles: slow drift with wobble) and lifetime, and is projected with the same stage camera, so effects shrink with depth and sit in front of the characters. Sparks, fire and stars use additive blending ("lighter") for a glow. The rainbow is not particles but a timestamped trail per joint, drawn as seven offset colour bands whose opacity falls with age.</li>
+</ul>
+
+<h2 id="games">10. Games</h2>
+<h3>Cube game</h3>
+<ul><li>4×4×4 grid, cube size = 0.1 × player height, placed at the aim point facing Phone A, or locked in front of the player.</li>
+<li>Selection needs the hand point (index fingertip, or index knuckle in body-only mode) to stay inside the target for the hold time; once inside, a 15% grace margin absorbs jitter. Times include reaching + holding; personal bests are stored per cube count and hold time.</li></ul>
+<h3>Ping pong</h3>
+<ul>
+<li><b>Table frame:</b> full-size table placed 0.4 m in front of the player at the end of the countdown, oriented along their facing.</li>
+<li><b>Latency hiding:</b> hand positions (with capture timestamps) from the last 0.3 s are fitted with a straight line; the paddle is drawn at that line's value <i>now</i> (extrapolating up to 160 ms). This also gives paddle velocity.</li>
+<li><b>Physics</b> in 2 ms steps (scaled by game speed): gravity, quadratic air drag (k = 0.13), table restitution 0.9, net and floor. Paddle hits reflect the ball's velocity relative to the paddle (restitution 0.85).</li>
+<li><b>Assist:</b> your swing chooses a target (sideways direction and depth from swing speed); a ballistic solver computes a shot that lands there and clears the net. Strong keeps targets on the table and uses a 1.5× hit zone; Light allows long/wide; Off is pure physics with the exact paddle face.</li>
+<li><b>Robot:</b> predicts where the ball will cross its hitting plane (forward simulation), moves after a reaction delay at limited speed with aiming error, and sometimes misses deliberately (Easy 30%, Medium 15%, Hard 6%, more on fast or wide shots).</li>
+<li><b>Rules:</b> a state machine tracks last hitter and bounces: own-side bounce or out loses; a second bounce on the receiver's side or a miss wins for the hitter. To 11, win by 2, serves alternate every two points.</li>
+</ul>
+
+<h3>Duck shoot</h3>
+<ul>
+<li><b>Aim ray:</b> from the midpoint of the eyes (MediaPipe pose eye points) through the index fingertip (Holistic hand point 8) — the natural "look along your finger" line, with a long, stable baseline. Optional "along the finger" mode uses index knuckle → tip.</li>
+<li><b>Screen mapping:</b> the first calibration shot defines a virtual plane perpendicular to the aim at the entered TV distance. Each of the 5 calibration shots gives a point on that plane; a <b>homography</b> (normalised DLT, least squares over 5 points) maps plane coordinates to screen coordinates. This absorbs the TV's real position, size and tilt and any consistent aiming bias. Quick aim uses one point plus the TV width instead.</li>
+<li><b>Trigger:</b> distance from thumb tip (point 4) to the nearest of index points 5–7, divided by hand size (wrist → middle knuckle). Below the "fire" threshold = shot; it must rise above a higher "re-cock" threshold before the next shot (hysteresis). Sensitivity moves both thresholds. A "hold steady" mode fires when the aim stays within 2% of the screen for 0.7 s.</li>
+<li><b>Shot timing:</b> the shot uses the aim from ~150 ms before the trigger frame, because pressing the thumb moves the hand. The crosshair is smoothed (EMA 0.5).</li>
+<li><b>Game:</b> waves of 1–2 ducks, 3 shots, 7-second escape timer; ducks bounce within the sky and turn randomly, getting faster each round; 10 ducks per round with a rising hit requirement (6→9). All art is drawn procedurally (original design).</li>
+<li><b>TV display role:</b> a TV opens <code>?room=…&amp;role=tv</code>, connects to Phone A and sends <code>{type:'join', as:'tv'}</code> (cameras send <code>as:'camera'</code>), so it never takes a camera slot. Phone A runs the game and streams a compact view state (<code>{type:'duck', v}</code> — ducks, crosshair, shots, score, tally, effects; ~0.5 KB) 30 times a second. The TV renders it with the same drawing code and plays sound effects for new effect IDs.</li>
+</ul>
+<h3>Gesture toolkit</h3>
+<ul><li>Per hand, from the 21 triangulated hand points: each finger's <b>straightness</b> (tip-to-knuckle distance ÷ the finger's joint-by-joint length: 1 = straight, ~0.3 = curled), thumb spread, thumb–index pinch distance, thumb–index gap (finger-gun trigger) and thumb direction, all relative to hand size.</li>
+<li>The finger pattern is matched to the nearest shape (open, peace, one finger, fist) — tolerant of noise — then the thumb separates point / finger gun / fired and fist / thumbs up; pinch has hysteresis (on &lt; 0.30, off &gt; 0.45 hand-sizes).</li>
+<li>A tracker debounces (a shape must hold for 2 frames; the trigger reacts in 1), timestamps how long a shape has been held, and emits events: pose changes, hand raised/lowered (wrist above nose), wave (≥3 direction changes, ≥8 cm, within 1.6 s while raised). Every mode can subscribe.</li>
+<li>Tested on simulated hands with added noise: 35/35 shapes correct without noise, 33–34/35 with 4–8 mm noise; live through the full camera pipeline all seven shapes were recognised in order.</li></ul>
+<h3>TV display for every mode</h3>
+<ul><li>Phone A streams the active mode's canvas with <code>canvas.captureStream(30)</code> over a PeerJS media call to the TV; when the tab changes, the video track is swapped in place (<code>RTCRtpSender.replaceTrack</code>) so the stream never restarts. While streaming, that canvas renders at ≥1280 px wide. Theremin audio is added as an audio track from a <code>MediaStreamAudioDestinationNode</code>.</li>
+<li>Control messages: <code>tvmode</code> {video | duck | idle, title} tells the TV what to show; Duck shoot keeps its compact state stream; <code>couch</code> {open, cursor, hover, progress, tiles} drives the menu overlay on the TV.</li>
+<li>Verified end to end over a real WebRTC connection (local PeerJS server): live video arrived, kept playing across tab switches, sharpened to 1280×959, Duck shoot switched to native drawing, and the couch menu appeared on the TV.</li></ul>
+<h3>Couch control</h3>
+<ul><li>Uses the shared pointing calibration (eye → fingertip ray + homography). Tiles are laid out in normalised screen coordinates, so Phone A does all hit-testing and the TV only draws. Selection: pinch or finger-gun fire (using the aim from ~150 ms earlier), or 1.5 s hover; opened by an open palm held 1 s or a wave.</li></ul>
+<h3>Theremin</h3>
+<ul><li>Hand positions (palm centre from hand points, or wrist/knuckle) pass through a short predictor (line fit over 0.2 s, extrapolated ≤ 90 ms) to hide some camera delay.</li>
+<li>Classic: pitch from the horizontal distance between the right hand and a virtual vertical antenna placed front-right of the player (6–66 cm → top to bottom of the range); volume from the left hand's height above a virtual loop front-left. Simple: hand heights between hips and above the head. Optional snapping to a scale; frequency = base × 2^(semitones/12).</li>
+<li>Audio graph: two oscillators (timbre per voice) → filter(s) → amplitude → dry + convolution reverb (generated impulse) → master → speakers, TV stream and recorder (MediaRecorder); LFO on detune for vibrato; frequency and volume changes use <code>setTargetAtTime</code> for glide.</li>
+<li>Verified by measuring the produced audio (FFT peak) while the simulated person played "Ode to Joy": the notes heard matched the notes intended once each glide settled.</li></ul>
+<h3>Tuning session</h3>
+<ul><li>A scripted sequence of 14 timed steps with spoken prompts (Speech Synthesis) recorded as a raw session; each step's label and time window are stored in the file (<code>kind: "tuning"</code>, <code>labels[]</code>), giving ground truth for tuning gesture thresholds and trigger sensitivity offline.</li></ul>
+<h3>Drums</h3>
+<p>The kit is defined in a body frame (x = player's right, y = up from the floor, z = forward) by <code>MotionCore.drumKit(height, size, offset)</code>: seven pads (snare, hi-hat, two toms, floor tom, crash, ride), each within ~0.5 m of the shoulders and laid out so no two overlap when seen from above — so a stroke down to one never passes through another's surface. <b>Placing</b> the kit takes the body frame (shoulder line → right, up × right → forward, hip centre, floor from the lowest foot point) after the player has stood still for 1.5 s. <b>Hit detection</b> runs on every raw triangulated frame (lowest delay): the palm point (mean of wrist, index and pinky landmarks) is expressed in the kit frame and its vertical speed tracked; a stroke is <i>armed</i> once the hand moves down faster than the sensitivity threshold, and fires when the hand, over a pad and previously above its surface, is predicted to pass through the surface within the early-trigger time (or stops just above it after a fast stroke). Loudness comes from the peak downward speed. After a hit the hand must bounce back up 4 cm before it can hit again (no double hits). <b>Feet</b>: the foot tip's height above its running floor level — a stamp after lifting ≥ 7 cm plays the bass drum; the left foot's height opens/closes the hi-hat. <b>Sound</b> is synthesised with Web Audio (pitched sines for the drums, filtered noise for snare and cymbals, six detuned square oscillators through a high-pass for metallic cymbals) into a compressor. The metronome is scheduled on the audio clock; recordings store hit times and replay them with timers. The <b>demo drummer</b> (<code>motionDrums</code>) plays a 4-bar groove at 96 bpm by moving its hands between pads along stroke arcs that always come down through the surface.</p>
+<h2 id="demo">11. Demo mode</h2>
+<p>A procedural skeleton (walking, turning, raising arms, animated hands) is projected into two or three virtual cameras with pixel noise and small timing offsets, then fed through the <i>same</i> pipeline as real phones — sync, matching, alignment, triangulation, games. For games, an autoplayer converts the game's target from display coordinates into the simulation's coordinates (best-fit similarity transform over the body), and moves the simulated hand there with two-bone arm IK, stepping forward if out of reach.</p>
+<p><b>Sample motions</b> (Dance, Twirl, Talk with hands, Mix) are generated in <code>core.js</code> by a small body builder: the pelvis, torso lean and twist, head turn, shrug and mouth are set directly, and each arm and leg is placed by two-bone IK from a wrist or ankle target (elbows bend outward, knees forward), so bone lengths never change. Each motion is a sequence of short "phrases" (8 beats of a dance move, 2.1 s of a talking gesture, one 7 s twirl cycle); consecutive phrases are cross-faded over their <i>parameters</i> (targets, angles), not joint positions, which keeps the limbs rigid during transitions. The Raven routine runs on a 150 bpm grid (beat 0.4 s, phrase 3.2 s = two bars), and <b>its soundtrack</b> (<code>music/raven.mp3</code>, a seamless 35.2 s loop composed on the same grid) is played through Web Audio as a looping AudioBufferSource. Its position is locked to the demo clock: music time = (motion time − 0.15 s display lag + speaker output latency) mod 35.2; a 4 Hz check restarts the source at the right offset if it drifts by more than 70 ms. The music starts only after a tap (which also unlocks audio on phones) and only while the demo is doing Raven things and not aligning. The Raven motion uses the same builder with torso-relative wing targets (so the wings stay attached when the body leans or banks) and a fixed backward elbow pole so wingbeats never flip the elbows. Hand shapes (open, fist, point, pinch, peace) come from the same named-pose hand model the gesture tests use. The resulting 3D body is placed in the room (root position and facing), projected into the virtual cameras and processed like any other demo frame. While alignment is collecting, the demo forces the walking motion so the calibration sees plenty of variety; the alignment starts automatically when the demo starts.</p>
+
+<h3>Movement files</h3>
+<p>A movement file is JSON: <code>{format:"motionlab-movement-v1", name, fps, handPose:{left,right}, frames:[{t, p:[[x,y,z] × 33 (or 75 with hands)]}]}</code> — the same frame layout as a 3D recording export, so recordings load too. On loading, the routine is normalised: the hip centre of the first full frame becomes the origin, it is rotated about the vertical so the hip line points along +x, flipped front-to-back if needed so the performer faces −z (towards Phone A in the demo), and shifted so the lowest foot point sits on the floor. <code>MotionCore.setClip</code> stores it; the demo's <code>synthPose</code> then interpolates between frames (looping) and the pose goes through the virtual cameras like any other demo motion. The built-in <code>motions/drummer.json</code> (1,440 frames, 30 fps, 48 s) is baked from <code>MotionCore.drummerPose(song)</code>, the same drummer model as the demo drummer, playing a scored song; the file also contains the score. <code>motions/theremin.json</code> (3,644 frames, 121 s) is baked the same way from a note list: for each note the right palm is placed at the horizontal distance from the antenna that the app maps to that pitch (Classic mode, key G, octave 3, 1-octave range; +0.5 semitone so each note sits in the middle of the snapping window), on a line from the antenna towards the player's front-left so every note is within reach; the palm is solved exactly by iterating the wrist target against the palm the app computes from the hand landmarks. Moves between notes ease in and out (no predictor overshoot) with the volume hand dipping briefly to articulate each note and more for big leaps. A movement file can carry <code>theremin</code> settings (applied when it loads) and a <code>songs</code> list (titles with start/end times, shown on the instrument screens). In a 2-minute test 122 of 124 notes sounded at the right pitch.</p>
+<h2 id="data">12. Data formats &amp; storage</h2>
+<h3>Recording export (3D)</h3>
+<p>CSV: <code>t</code> then <code>&lt;joint&gt;_x, _y, _z</code> per joint in metres. JSON: <code>{units, axes, joints[], calibration{fov, medErrPx}, frames:[{t, p:[[x,y,z]|null…]}]}</code>.</p>
+<h3>Raw session (diagnostics)</h3>
+<pre>{ "format": "motionlab-raw-v1", "started", "durationS", "trackingMode", "heightCm", "fovDeg", "demo",
+  "clocks": { "b": {offsetMs, rttMs}, "c": {…} },
+  "calibration": { cams:[{name, R, t, f, dims, err}], up, right, fwd, origin, statureUnits, medErr, … },
+  "framesPerPhone": { "a": n, "b": n, "c": n },
+  "frames": [ { "s": "a|b|c", "t": ms (host clock), "w", "h", "p": [[x,y,v] × 33 or 75] } ] }</pre>
+<h3>Browser storage</h3>
+<p><code>motionlab-calib-v6</code> (alignment), <code>motionlab-tab</code>, <code>motionlab-show</code>, <code>motionlab-style</code>, <code>motionlab-best-&lt;cubes&gt;-&lt;hold&gt;</code>, <code>motionlab-backdrops</code> (Playhouse pictures, JSON map of character → JPEG data URL), <code>motionlab-stage-style</code>, <code>motionlab-aim</code> (Duck shoot calibration: plane + homography), <code>motionlab-duck-best</code>.</p>
+
+<h2 id="code">13. Source layout &amp; build</h2>
+<table><tr><th>File</th><th>Contents</th></tr>
+<tr><td><code>core.js</code></td><td>MotionCore — pure geometry with no page code, so it can be tested in Node.</td></tr>
+<tr><td><code>app.html</code></td><td>Layout, styles and the app script (shell/tabs, networking, detection loop, sync and matching, setup check, alignment UI, viewer, costumes, cube game, ping pong, recording, demo).</td></tr>
+<tr><td><code>index.html</code> (deployed)</td><td>Built by inlining <code>core.js</code> into <code>app.html</code> — one self-contained page.</td></tr>
+<tr><td><code>help.html</code>, <code>architecture.html</code></td><td>These documents, linked from the app header.</td></tr><tr><td><code>backdrops/</code></td><td>Built-in Playhouse pictures, one JPEG per character (skeleton, snowman, dragon, bones, witch, gymf, gymm, raven).</td></tr><tr><td><code>motions/</code></td><td>Movement files (<code>drummer.json</code>, <code>theremin.json</code>).</td></tr><tr><td><code>music/</code></td><td>Soundtracks (<code>raven.mp3</code>).</td></tr><tr><td><code>panos/</code></td><td>Built-in 360° panoramas (<code>snowman.jpg</code>, <code>raven.jpg</code>); each has its own default horizon row, and the horizon slider is remembered per character.</td></tr></table>
+<p>Deploy by dragging the folder onto Netlify. There is no server code and no build tooling beyond the inline step.</p>
+
+<h2 id="quality">14. Accuracy &amp; testing</h2>
+<ul>
+<li><b>Simulation:</b> with 2 px of noise, limb lengths are recovered within ~1 cm (2 cameras) and joint positions within ~1 cm (3 cameras); camera distances within a few cm of the truth.</li>
+<li><b>Real three-device session</b> (two iPhones + tablet): bone-length wobble fell from 15% to ~7% after the v6.1 robustness work; timing between phones lined up within ~50 ms; lens setting made &lt;1% difference.</li>
+<li><b>Real multi-device tests:</b> from v8, a local PeerJS server (enabled with the hidden <code>?peerhost=host:port/path</code> option, also usable for self-hosting) let several browser pages connect for real — host, camera guest with live MediaPipe on a fake camera, and TV — verifying joining, slot letters, clock sync, TV display, video streaming and couch control.</li>
+<li><b>Tests used during development:</b> Node scripts against synthetic data (calibration, triangulation, aim point, similarity, IK); offline analysis of raw sessions; headless-browser end-to-end runs of demo mode (alignment, cube game, ping pong rallies, costumes, full screen, both screen sizes); and a run of the real MediaPipe models with a fake camera.</li>
+</ul>
+
+<h2 id="limits">15. Known limits &amp; next steps</h2>
+<ul>
+<li>Lens distortion isn't modelled; very wide lenses reduce accuracy.</li>
+<li>One person at a time (MediaPipe follows a single body).</li>
+<li>Tracking delay ~100–200 ms; games hide it with prediction and assist, but very fast play is limited by ~10–15 fps detection.</li>
+<li>Scale relies on the entered height (a few cm of uncertainty).</li>
+<li>Depends on public CDNs and the public PeerJS server; self-hosting those would remove the outside dependencies.</li>
+<li>Ideas: per-device lens estimation from raw sessions, a WebGL renderer, loading external rigs/animations, more games and visualisations using the same 3D feed.</li>
+</ul>
+<p class="muted" style="margin-top:30px">Motion Lab · <a href="help.html">Help</a> · <a href="./">Back to the app</a></p>
+</main></body></html>
